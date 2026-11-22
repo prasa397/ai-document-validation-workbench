@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Document Validation Workbench — Demo</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: #0b1120; color: #f1f5f9; }
+    header {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+      gap: 12px; padding: 14px 20px; background: #0f172a; border-bottom: 1px solid #1e293b;
+    }
+    .doc-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      cursor: pointer; border: 1px solid #334155; background: #1e293b; color: #e2e8f0;
+      padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 500;
+    }
+    button:hover { background: #334155; }
+    button.active { background: #4f46e5; border-color: #6366f1; color: #fff; }
+    button.primary { background: #10b981; border-color: #10b981; color: #052e16; font-weight: 700; }
+    button.fix-btn { background: #f59e0b; border-color: #f59e0b; color: #1c1917; font-weight: 700; padding: 5px 10px; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1.15fr 1fr; min-height: calc(100vh - 62px); }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+    .pane { padding: 18px; border-right: 1px solid #1e293b; overflow-y: auto; }
+    .canvas {
+      position: relative; background: #f8fafc; color: #0f172a; border-radius: 10px;
+      padding: 24px; min-height: 420px; box-shadow: 0 10px 25px rgba(0,0,0,.35);
+    }
+    .bbox {
+      position: absolute; border: 2px solid #4f46e5; background: rgba(79, 70, 229, 0.14);
+      border-radius: 4px; transition: all 0.15s ease; pointer-events: none;
+    }
+    .bbox.alert { border-color: #dc2626; background: rgba(220, 38, 38, 0.2); }
+    .alert-box {
+      padding: 12px; border-radius: 8px; margin-bottom: 14px; font-size: 13px;
+      background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.45); color: #fecaca;
+    }
+    .ok-box {
+      padding: 12px; border-radius: 8px; margin-bottom: 14px; font-size: 13px;
+      background: rgba(16, 185, 129, 0.14); border: 1px solid rgba(16, 185, 129, 0.45); color: #a7f3d0;
+    }
+    .field-card {
+      background: #0f172a; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 10px;
+    }
+    .field-card.selected { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; }
+    .field-top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #94a3b8; }
+    input {
+      width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334155;
+      background: #020617; color: #fff; font-size: 14px;
+    }
+    pre {
+      background: #020617; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 14px; font-size: 12px; color: #93c5fd; overflow-x: auto;
+    }
+    .badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .badge.warn { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
+    .badge.ok { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="doc-tabs" id="docSelector"></div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span id="statusBadge" class="badge warn">NEEDS_REVIEW</span>
+      <button id="viewToggleBtn" onclick="toggleView()">View Canonical JSON</button>
+      <button class="primary" onclick="approveDoc()">Approve & Export</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="pane">
+      <div id="docMeta" style="font-size:13px; color:#94a3b8; margin-bottom:10px;"></div>
+      <div class="canvas" id="docCanvas"></div>
+    </div>
+    <div class="pane" id="rightPane"></div>
+  </div>
+
+  <script>
+    const docs = [
+      {
+        id: "doc-1",
+        fileName: "INV-2026-8841.pdf",
+        category: "Procurement > Commercial Invoice",
+        producer: "Oracle BI Publisher",
+        fraudScore: 0.03,
+        isInvoice: true,
+        fields: {
+          vendor_name: { label: "Vendor Name", value: "Acme Industrial Supply", conf: 0.99, bbox: [6, 8, 48, 14] },
+          invoice_number: { label: "Invoice Number", value: "INV-2026-8841", conf: 0.98, bbox: [6, 17, 36, 22] },
+          subtotal: { label: "Subtotal ($)", value: "4200.00", conf: 0.95, bbox: [62, 56, 92, 62] },
+          tax_amount: { label: "Tax Amount ($)", value: "420.00", conf: 0.92, bbox: [62, 64, 92, 70] },
+          grand_total: { label: "Grand Total ($)", value: "4720.00", conf: 0.64, bbox: [62, 72, 92, 79] }
+        }
+      },
+      {
+        id: "doc-2",
+        fileName: "Q4_STMT_TAMPERED.pdf",
+        category: "Financial > Bank Statement",
+        producer: "Adobe Photoshop 25.0",
+        fraudScore: 0.84,
+        isInvoice: false,
+        fields: {
+          account_holder: { label: "Account Holder", value: "Northstar Logistics LLC", conf: 0.97, bbox: [6, 8, 52, 14] },
+          opening_balance: { label: "Opening Balance ($)", value: "18450.00", conf: 0.93, bbox: [6, 28, 45, 34] },
+          closing_balance: { label: "Closing Balance ($)", value: "64900.00", conf: 0.71, bbox: [52, 28, 92, 34] }
+        }
+      },
+      {
+        id: "doc-3",
+        fileName: "MSA_ENTERPRISE_2026.docx",
+        category: "Legal > Master Services Agreement",
+        producer: "Microsoft Word",
+        fraudScore: 0.02,
+        isInvoice: false,
+        fields: {
+          entity_primary: { label: "Primary Entity", value: "Apex Systems Corp", conf: 0.99, bbox: [6, 10, 55, 16] },
+          effective_date: { label: "Effective Date", value: "2026-01-01", conf: 0.98, bbox: [6, 24, 42, 30] },
+          jurisdiction: { label: "Governing Law", value: "Delaware, USA", conf: 0.97, bbox: [6, 38, 45, 44] },
+          term_months: { label: "Term (Months)", value: "36", conf: 0.96, bbox: [6, 52, 35, 58] }
+        }
+      }
+    ];
+
+    let activeDocId = "doc-1";
+    let selectedField = "grand_total";
+    let showJson = false;
+
+    function getDoc() { return docs.find(d => d.id === activeDocId); }
+
+    function evaluateDoc(doc) {
+      const issues = [];
+      if (doc.isInvoice) {
+        const sub = parseFloat(doc.fields.subtotal.value) || 0;
+        const tax = parseFloat(doc.fields.tax_amount.value) || 0;
+        const tot = parseFloat(doc.fields.grand_total.value) || 0;
+        const expected = +(sub + tax).toFixed(2);
+        if (Math.abs(expected - tot) > 0.02) {
+          issues.push({
+            code: "FIN_MATH_001",
+            msg: `Subtotal (${sub.toFixed(2)}) + Tax (${tax.toFixed(2)}) = ${expected.toFixed(2)}, but Grand Total is ${tot.toFixed(2)}.`,
+            expected: expected.toFixed(2)
+          });
+        }
+      }
+      if (doc.fraudScore >= 0.5) {
+        issues.push({
+          code: "FRD_META_001",
+          msg: `High tampering risk (${(doc.fraudScore * 100).toFixed(0)}%) — Producer "${doc.producer}" flagged for manual audit.`
+        });
+      }
+      const vals = Object.values(doc.fields);
+      const avgConf = vals.reduce((a, b) => a + b.conf, 0) / vals.length;
+      const ready = issues.length === 0 && avgConf >= 0.85;
+      return { issues, avgConf, ready };
+    }
+
+    function autoFixTotal() {
+      const doc = getDoc();
+      const sub = parseFloat(doc.fields.subtotal.value) || 0;
+      const tax = parseFloat(doc.fields.tax_amount.value) || 0;
+      doc.fields.grand_total.value = (sub + tax).toFixed(2);
+      doc.fields.grand_total.conf = 0.99;
+      render();
+    }
+
+    function approveDoc() {
+      const { ready } = evaluateDoc(getDoc());
+      alert(ready
+        ? "Approved! Canonical JSON payload is ready for downstream export."
+        : "Cannot auto-approve while validation/risk alerts remain active. Resolve issues first or review manually.");
+    }
+
+    function toggleView() {
+      showJson = !showJson;
+      document.getElementById("viewToggleBtn").textContent = showJson ? "View Fields & Rules" : "View Canonical JSON";
+      render();
+    }
+
+    function render() {
+      const doc = getDoc();
+      const { issues, avgConf, ready } = evaluateDoc(doc);
+
+      const selector = document.getElementById("docSelector");
+      selector.innerHTML = docs.map(d =>
+        `<button class="${d.id === doc.id ? 'active' : ''}" onclick="activeDocId='${d.id}'; selectedField=Object.keys(docs.find(x=>x.id==='${d.id}').fields)[0]; render();">${d.fileName}</button>`
+      ).join("");
+
+      const badge = document.getElementById("statusBadge");
+      badge.className = "badge " + (ready ? "ok" : "warn");
+      badge.textContent = (ready ? "READY_TO_EXPORT" : "NEEDS_REVIEW") + ` • ${(avgConf * 100).toFixed(1)}%`;
+
+      document.getElementById("docMeta").textContent =
+        `${doc.category} • Producer: ${doc.producer} • Fraud Risk: ${(doc.fraudScore * 100).toFixed(0)}%`;
+
+      const canvas = document.getElementById("docCanvas");
+      canvas.innerHTML = `
+        <div style="border-bottom:2px solid #cbd5e1; padding-bottom:10px; margin-bottom:16px;">
+          <strong>${doc.fileName}</strong> — <span>${doc.category}</span>
+        </div>
+        ${Object.entries(doc.fields).map(([k, f]) => {
+          const [x1, y1, x2, y2] = f.bbox;
+          const isAlert = issues.some(i => i.code === "FIN_MATH_001" && k === "grand_total");
+          const isSel = selectedField === k;
+          return `<div class="bbox ${isAlert ? 'alert' : ''}" style="left:${x1}%;top:${y1}%;width:${x2-x1}%;height:${y2-y1}%;outline:${isSel ? '2px solid #0f172a' : 'none'}"></div>`;
+        }).join("")}
+        <div style="margin-top:20px; font-size:14px; line-height:1.7;">
+          ${Object.values(doc.fields).map(f => `<div><strong>${f.label}:</strong> ${f.value}</div>`).join("")}
+        </div>
+      `;
+
+      const rightPane = document.getElementById("rightPane");
+      if (showJson) {
+        const payload = {
+          document_id: doc.id,
+          file_name: doc.fileName,
+          category: doc.category,
+          status: ready ? "READY_TO_EXPORT" : "NEEDS_REVIEW",
+          confidence: +avgConf.toFixed(4),
+          fraud_risk_score: doc.fraudScore,
+          fields: Object.fromEntries(Object.entries(doc.fields).map(([k, v]) => [k, v.value]))
+        };
+        rightPane.innerHTML = `<h3 style="margin-top:0;">Canonical JSON Output</h3><pre>${JSON.stringify(payload, null, 2)}</pre>`;
+        return;
+      }
+
+      const alertsHtml = issues.length
+        ? issues.map(i => `
+            <div class="alert-box">
+              <strong>[${i.code}]</strong> ${i.msg}
+              ${i.expected ? `<div style="margin-top:8px;"><button class="fix-btn" onclick="autoFixTotal()">Auto-Fix Grand Total to ${i.expected}</button></div>` : ""}
+            </div>`).join("")
+        : `<div class="ok-box">All deterministic business rules and integrity checks passed.</div>`;
+
+      const fieldsHtml = Object.entries(doc.fields).map(([k, f]) => `
+        <div class="field-card ${selectedField === k ? 'selected' : ''}" onclick="selectedField='${k}'; render();">
+          <div class="field-top">
+            <span>${f.label} <small>[${f.bbox.join(", ")}]</small></span>
+            <span style="color:${f.conf >= 0.85 ? '#34d399' : '#fbbf24'}; font-weight:600;">${(f.conf * 100).toFixed(0)}%</span>
+          </div>
+          <input value="${f.value}" oninput="getDoc().fields['${k}'].value = this.value; getDoc().fields['${k}'].conf = 0.99; render();" />
+        </div>
+      `).join("");
+
+      rightPane.innerHTML = `<h3 style="margin-top:0;">Validation & Extracted Fields</h3>${alertsHtml}${fieldsHtml}`;
+    }
+
+    render();
+  </script>
+</body>
+</html>
